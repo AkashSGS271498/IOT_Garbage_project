@@ -193,3 +193,179 @@ def main():
             time.sleep(0.05)
 
 main()
+
+# import network
+# import time
+# import json
+# from machine import Pin, PWM
+
+# # --- AUTO-INSTALL MQTT LIBRARY ---
+# try:
+#     from umqtt.simple import MQTTClient
+# except ImportError:
+#     print("MQTT library missing. Connecting to WiFi to download it...")
+#     wlan = network.WLAN(network.STA_IF)
+#     wlan.active(True)
+#     wlan.connect("Wokwi-GUEST", "")
+#     while not wlan.isconnected():
+#         time.sleep(0.5)
+#     print("WiFi Connected. Downloading umqtt.simple...")
+#     import mip
+#     mip.install("umqtt.simple")
+#     print("Download complete! Starting system...")
+#     from umqtt.simple import MQTTClient
+# # ---------------------------------
+
+# # --- PIN ASSIGNMENTS ---
+# ir_sensor      = Pin(17, Pin.IN, Pin.PULL_DOWN)
+# metal_sensor   = Pin(27, Pin.IN, Pin.PULL_DOWN)
+# moisture_sensor= Pin(22, Pin.IN, Pin.PULL_DOWN)
+# plastic_sensor = Pin(26, Pin.IN, Pin.PULL_DOWN)
+
+# # --- SERVO SETUP ---
+# servo_base = PWM(Pin(18))
+# servo_base.freq(50)
+# servo_gripper = PWM(Pin(19))
+# servo_gripper.freq(50)
+
+# def set_angle(servo, angle):
+#     duty = int(1638 + (angle / 180.0) * (8192 - 1638))
+#     servo.duty_u16(duty)
+
+# def actuate_gripper(action):
+#     if action == "close":
+#         set_angle(servo_gripper, 0)
+#         print(" -> Gripper: CLOSED")
+#     elif action == "open":
+#         set_angle(servo_gripper, 90)
+#         print(" -> Gripper: OPEN")
+#     time.sleep(0.8)
+
+# BIN_ANGLES = {
+#     "Metal": 15,
+#     "Wet Waste": 60,
+#     "Plastic": 105,
+#     "Dry Waste": 150,
+# }
+
+# def sort_waste(category):
+#     drop_angle = BIN_ANGLES.get(category, 150)
+#     print(f"\n[WasteAI] Sorting: {category} -> Bin @ {drop_angle} degrees")
+    
+#     actuate_gripper("close")
+    
+#     print(f" -> Rotating arm to {drop_angle} degrees")
+#     set_angle(servo_base, drop_angle)
+#     time.sleep(1.5)
+    
+#     actuate_gripper("open")
+    
+#     print(" -> Returning to HOME (180 degrees)")
+#     set_angle(servo_base, 180)
+#     time.sleep(1.5)
+#     print(" [Done] Ready for next item.\n")
+
+# def read_local_sensors():
+#     if metal_sensor.value() == 1:
+#         return "Metal"
+#     if moisture_sensor.value() == 1:
+#         return "Wet Waste"
+#     if plastic_sensor.value() == 1:
+#         return "Plastic"
+#     return "Dry Waste"
+
+# def on_mqtt_message(topic, msg):
+#     raw = msg.decode("utf-8").strip()
+#     print(f"\n[MQTT Command Received]: {raw}")
+    
+#     category = raw
+#     if raw.startswith("{"):
+#         try:
+#             data = json.loads(raw)
+#             category = data.get("category", "").strip()
+#         except:
+#             pass
+            
+#     if category in BIN_ANGLES:
+#         sort_waste(category)
+#     else:
+#         print(f" [WARN] Unknown category '{category}', defaulting to Dry Waste")
+#         sort_waste("Dry Waste")
+
+# def connect_wifi():
+#     wlan = network.WLAN(network.STA_IF)
+#     wlan.active(True)
+#     if wlan.isconnected():
+#         return wlan
+#     print("[WiFi] Connecting to Wokwi-GUEST...")
+#     wlan.connect("Wokwi-GUEST", "")
+#     timeout = 15
+#     while not wlan.isconnected() and timeout > 0:
+#         time.sleep(0.5)
+#         timeout -= 1
+#     if wlan.isconnected():
+#         print(f"[WiFi] Connected! IP: {wlan.ifconfig()[0]}")
+#     else:
+#         print("[WiFi] WARNING: Could not connect.")
+#     return wlan
+
+# # def connect_mqtt():
+# #     client = MQTTClient("pico_wasteai_001", "broker.emqx.io", keepalive=60)
+# #     client.set_callback(on_mqtt_message)
+# #     try:
+# #         client.connect()
+# #         client.subscribe(b"skit/garbage_sorter/command")
+# #         print("[MQTT] Connected to HiveMQ Broker")
+# #         return client
+# #     except Exception as e:
+# #         print(f"[MQTT] Connection failed: {e}")
+# #         return None
+
+# def connect_mqtt():
+#     # Unique client ID so you don't get kicked off
+#     client = MQTTClient("pico_akash_final", "broker.hivemq.com", keepalive=60)
+#     client.set_callback(on_mqtt_message)
+#     try:
+#         client.connect()
+#         # Exact same topic as the website
+#         client.subscribe(b"skit/akash_project/command")
+#         print("[MQTT] Connected to HiveMQ Broker")
+#         return client
+#     except Exception as e:
+#         print(f"[MQTT] Connection failed: {e}")
+#         return None
+
+# # --- MAIN EXECUTION ---
+# set_angle(servo_gripper, 90)
+# set_angle(servo_base, 180)
+# time.sleep(1)
+
+# print("\n--- Starting WasteAI System ---")
+# wlan = connect_wifi()
+# mqtt_client = None
+
+# if wlan.isconnected():
+#     time.sleep(1)
+#     mqtt_client = connect_mqtt()
+
+# if mqtt_client:
+#     print("\n[System] MQTT mode active. Waiting for website commands...")
+#     while True:
+#         try:
+#             mqtt_client.check_msg()
+#         except:
+#             pass
+            
+#         if ir_sensor.value() == 1:
+#             print("\n[IR] Object detected (Local manual override)")
+#             sort_waste(read_local_sensors())
+#             time.sleep(1)
+#         time.sleep(0.1)
+# else:
+#     print("\n[System] LOCAL mode. Use physical switches to sort.")
+#     while True:
+#         if ir_sensor.value() == 1:
+#             print("\n[IR] Object detected on conveyor.")
+#             sort_waste(read_local_sensors())
+#             time.sleep(1)
+#         time.sleep(0.1)
