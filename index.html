@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WasteAI</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Animated Background Particles -->
+  <canvas id="particleCanvas" aria-hidden="true"></canvas>
+
+  <!-- ====================== HEADER ====================== -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="logo-group">
+        <span class="logo-text">Waste<span class="logo-accent">AI</span></span>
+      </div>
+      <nav class="header-nav" aria-label="System status indicators">
+        <div class="status-pill" id="mqttStatusPill" title="MQTT Broker Connection">
+          <span class="status-dot" id="mqttDot"></span>
+          <span id="mqttStatusLabel">MQTT: Disconnected</span>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ====================== MAIN ====================== -->
+  <main class="main-wrapper clean-layout" role="main">
+    <div class="clean-grid">
+
+      <!-- 1. UPLOAD IMAGE -->
+      <section class="card config-card" aria-labelledby="uploadHeading">
+        <div class="card-section">
+          <h2 id="uploadHeading" class="section-title">
+            <span class="section-icon">📤</span> Upload Image
+          </h2>
+          <div class="drop-zone" id="dropZone" role="button" tabindex="0">
+            <div class="drop-zone-inner" id="dropZoneInner">
+              <p class="drop-primary">Drop waste image here</p>
+              <p class="drop-secondary">or click to browse</p>
+            </div>
+            <img id="previewImg" class="preview-image hidden" alt="Uploaded waste item preview" />
+          </div>
+          <input type="file" id="fileInput" accept="image/*" class="sr-only" />
+          <button class="btn btn-primary" id="classifyBtn" disabled>
+            <span class="btn-spinner hidden" id="classifySpinner"></span>
+            <span id="classifyBtnText">Classify Waste</span>
+          </button>
+          
+          <div id="errorBox" class="error-box hidden"></div>
+        </div>
+      </section>
+
+      <!-- 2. CLASSIFIED RESULT -->
+      <section class="card result-card" aria-labelledby="resultHeading">
+        <div class="card-section">
+          <h2 id="resultHeading" class="section-title">
+            <span class="section-icon">🎯</span> Classification Result
+          </h2>
+          <div class="result-display" id="resultDisplay">
+            <div class="result-placeholder" id="resultPlaceholder">
+              <p>Awaiting image classification…</p>
+            </div>
+            <div class="result-content hidden" id="resultContent">
+              <div class="result-category-icon" id="resultCategoryIcon"></div>
+              <div class="result-category-name" id="resultCategoryName"></div>
+              <div class="result-confidence-bar">
+                <div class="result-confidence-fill" id="resultConfidenceFill"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. ARM MOVEMENT -->
+      <section class="card" aria-labelledby="armHeading">
+        <div class="card-section">
+          <h2 id="armHeading" class="section-title">
+            <span class="section-icon">🦾</span> Robotic Arm Visualizer
+          </h2>
+          <div class="servo-viz-wrapper">
+            <canvas id="servoCanvas" width="340" height="180"></canvas>
+            <div class="servo-info">
+              <div class="servo-row">
+                <span class="servo-key">Base Angle</span>
+                <span class="servo-val" id="servoBaseAngle">180°</span>
+              </div>
+              <div class="servo-row">
+                <span class="servo-key">Gripper</span>
+                <span class="servo-val" id="servoGripperState">Open</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

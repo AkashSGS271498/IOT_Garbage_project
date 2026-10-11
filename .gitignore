@@ -1,0 +1,26 @@
+# ── Secrets / Environment ─────────────────────────────────
+.env
+*.env
+
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+pip-log.txt
+
+# ── OS / Editor ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# ── Logs ──────────────────────────────────────────────────
+*.log

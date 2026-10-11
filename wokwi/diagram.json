@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "author": "WasteAI — Smart Waste Segregation System",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-pi-pico-w",
+      "id": "pico",
+      "top": -195.15,
+      "left": -265.2,
+      "attrs": { "env": "micropython-20240602-v1.23.0" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn1",
+      "top": 25.4,
+      "left": 57.6,
+      "attrs": { "color": "green", "xray": "1" },
+      "label": "IR Sensor (Object Detected)"
+    },
+    {
+      "type": "wokwi-slide-switch",
+      "id": "sw1",
+      "top": -322,
+      "left": -25.7,
+      "attrs": {},
+      "label": "Metal Sensor"
+    },
+    {
+      "type": "wokwi-slide-switch",
+      "id": "sw2",
+      "top": -312.4,
+      "left": 166.3,
+      "attrs": {},
+      "label": "Moisture Sensor"
+    },
+    {
+      "type": "wokwi-slide-switch",
+      "id": "sw3",
+      "top": -379.6,
+      "left": -208.1,
+      "attrs": {},
+      "label": "Plastic Sensor"
+    },
+    {
+      "type": "wokwi-servo",
+      "id": "servo1",
+      "top": 132.4,
+      "left": -518.4,
+      "attrs": {},
+      "label": "Servo Base (GP18)"
+    },
+    {
+      "type": "wokwi-servo",
+      "id": "servo2",
+      "top": 113.2,
+      "left": -96,
+      "attrs": {},
+      "label": "Servo Gripper (GP19)"
+    }
+  ],
+  "connections": [
+    [ "btn1:1.l", "pico:3V3",   "green",  [ "h0" ] ],
+    [ "btn1:2.l", "pico:GP17",  "green",  [ "h0" ] ],
+
+    [ "sw1:1",    "pico:GND.8", "black",  [ "v0" ] ],
+    [ "sw1:2",    "pico:GP27",  "yellow", [ "v0" ] ],
+    [ "sw1:3",    "pico:3V3",   "red",    [ "v0" ] ],
+
+    [ "sw2:1",    "pico:GND.7", "black",  [ "v0" ] ],
+    [ "sw2:2",    "pico:GP22",  "blue",   [ "v0" ] ],
+    [ "sw2:3",    "pico:3V3",   "red",    [ "v0" ] ],
+
+    [ "sw3:1",    "pico:GND.1", "black",  [ "v0" ] ],
+    [ "sw3:2",    "pico:GP26",  "orange", [ "v0" ] ],
+    [ "sw3:3",    "pico:3V3",   "red",    [ "v0" ] ],
+
+    [ "servo1:GND", "pico:GND.4", "black", [ "h0" ] ],
+    [ "servo1:V+",  "pico:VBUS",  "red",   [ "h0" ] ],
+    [ "servo1:PWM", "pico:GP18",  "white", [ "h0" ] ],
+
+    [ "servo2:GND", "pico:GND.5", "black", [ "h0" ] ],
+    [ "servo2:V+",  "pico:VBUS",  "red",   [ "h0" ] ],
+    [ "servo2:PWM", "pico:GP19",  "white", [ "h0" ] ]
+  ],
+  "dependencies": {}
+}

@@ -1,0 +1,4 @@
+[env:pico_w]
+board = rp2040
+framework = arduino
+board_build.filesystem_size = 0.5m
