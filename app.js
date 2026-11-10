@@ -425,8 +425,8 @@ const BROKER_URL = "wss://broker.hivemq.com:8884/mqtt";
 const CMD_TOPIC = "skit/akash_project/command";
 const ACK_TOPIC = "skit/akash_project/ack";
 const STATUS_TOPIC = "skit/akash_project/status";
-const MAX_TRIES = 5;
-const RETRY_MS = 8000; // longer than one full sort cycle on the Pico
+const MAX_TRIES = 10;
+const RETRY_MS = 12000; // 10 tries × 12s = 2 min — enough for Pico cold boot
 
 // DOM REFS
 const dropZone = document.getElementById('dropZone');

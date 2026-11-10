@@ -1,373 +1,372 @@
-#use this code on wokwi website main.py
-
 import network
 import time
 import json
+import random
+import struct
+import usocket as socket
 from machine import Pin, PWM
-from umqtt.simple import MQTTClient
 
-# ─────────────────────────────────────────────────────────
-#  WasteAI — MicroPython MQTT Client for Raspberry Pi Pico W
-#  Board:  wokwi-pi-pico-w
-#  Broker: broker.hivemq.com  (public, no auth needed)
-#  Topic:  skit/garbage_sorter/command
-#  Payload: plain text  → "Metal" | "Wet Waste" | "Plastic" | "Dry Waste"
-# ─────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Inline umqtt.simple — faithful copy from micropython-lib
+# (avoids the hanging mip.install in Wokwi)
+# ---------------------------------------------------------------------------
+class MQTTClient:
+    def __init__(self, client_id, server, port=0, user=None, password=None,
+                 keepalive=0, ssl=False, ssl_params={}):
+        if isinstance(client_id, str):
+            client_id = client_id.encode()
+        self.client_id = client_id
+        self.sock = None
+        self.server = server
+        self.port = port or (8883 if ssl else 1883)
+        self.ssl = ssl
+        self.ssl_params = ssl_params
+        self.pid = 0
+        self.cb = None
+        self.user = user
+        self.pswd = password
+        self.keepalive = keepalive
+        self.lw_topic = None
+        self.lw_msg = None
+        self.lw_qos = 0
+        self.lw_retain = False
 
-# ── PIN ASSIGNMENTS ──────────────────────────────────────
-# Physical / manual override sensors (slide switches in Wokwi)
-ir_sensor      = Pin(17, Pin.IN, Pin.PULL_DOWN)   # IR: object detected
-metal_sensor   = Pin(27, Pin.IN, Pin.PULL_DOWN)   # Slide-switch → Metal
-moisture_sensor= Pin(22, Pin.IN, Pin.PULL_DOWN)   # Slide-switch → Wet
-plastic_sensor = Pin(26, Pin.IN, Pin.PULL_DOWN)   # Slide-switch → Plastic
+    def _send_str(self, s):
+        if isinstance(s, str):
+            s = s.encode()
+        self.sock.write(struct.pack("!H", len(s)))
+        self.sock.write(s)
 
-# Servos at 50 Hz
-servo_base    = PWM(Pin(18)); servo_base.freq(50)    # Arm rotation
-servo_gripper = PWM(Pin(19)); servo_gripper.freq(50) # Gripper open/close
+    def _recv_len(self):
+        n = 0
+        sh = 0
+        while 1:
+            b = self.sock.read(1)[0]
+            n |= (b & 0x7F) << sh
+            if not b & 0x80:
+                return n
+            sh += 7
 
-# ── SERVO UTILITIES ──────────────────────────────────────
+    def set_callback(self, f):
+        self.cb = f
+
+    def set_last_will(self, topic, msg, retain=False, qos=0):
+        if isinstance(topic, str):
+            topic = topic.encode()
+        if isinstance(msg, str):
+            msg = msg.encode()
+        self.lw_topic = topic
+        self.lw_msg = msg
+        self.lw_qos = qos
+        self.lw_retain = retain
+
+    def connect(self, clean_session=True):
+        self.sock = socket.socket()
+        addr = socket.getaddrinfo(self.server, self.port)[0][-1]
+        self.sock.connect(addr)
+        if self.ssl:
+            import ussl
+            self.sock = ussl.wrap_socket(self.sock, **self.ssl_params)
+        # Build variable header + payload
+        plen = 10 + 2 + len(self.client_id)
+        flags = (clean_session << 1)
+        if self.user:
+            flags |= 0xC0
+            plen += 2 + len(self.user) + 2 + len(self.pswd or b"")
+        if self.lw_topic:
+            flags |= 0x04 | (self.lw_qos << 3) | (self.lw_retain << 5)
+            plen += 2 + len(self.lw_topic) + 2 + len(self.lw_msg)
+        # Fixed header
+        hdr = bytearray()
+        hdr.append(0x10)
+        rlen = plen
+        while rlen > 0x7F:
+            hdr.append((rlen & 0x7F) | 0x80)
+            rlen >>= 7
+        hdr.append(rlen)
+        self.sock.write(hdr)
+        # Variable header
+        self.sock.write(b"\x00\x04MQTT\x04")
+        self.sock.write(bytes([flags]))
+        self.sock.write(struct.pack("!H", self.keepalive))
+        # Payload
+        self._send_str(self.client_id)
+        if self.lw_topic:
+            self._send_str(self.lw_topic)
+            self._send_str(self.lw_msg)
+        if self.user:
+            self._send_str(self.user)
+            self._send_str(self.pswd or b"")
+        # Read CONNACK — blocking
+        self.sock.setblocking(True)
+        resp = self.sock.read(4)
+        if resp is None or len(resp) < 4:
+            raise OSError("CONNACK not received")
+        if resp[0] != 0x20 or resp[1] != 0x02:
+            raise OSError("Invalid CONNACK")
+        if resp[3] != 0:
+            raise OSError("CONNACK error: %d" % resp[3])
+        return resp[2] & 1
+
+    def disconnect(self):
+        self.sock.write(b"\xe0\0")
+        self.sock.close()
+
+    def ping(self):
+        self.sock.write(b"\xc0\0")
+
+    def publish(self, topic, msg, retain=False, qos=0):
+        if isinstance(topic, str):
+            topic = topic.encode()
+        if isinstance(msg, str):
+            msg = msg.encode()
+        pkt_type = 0x30 | (qos << 1) | retain
+        rlen = 2 + len(topic) + len(msg)
+        if qos > 0:
+            rlen += 2
+        # Encode remaining length + send
+        hdr = bytearray()
+        hdr.append(pkt_type)
+        rl = rlen
+        while rl > 0x7F:
+            hdr.append((rl & 0x7F) | 0x80)
+            rl >>= 7
+        hdr.append(rl)
+        self.sock.write(hdr)
+        self._send_str(topic)
+        if qos > 0:
+            self.pid += 1
+            self.sock.write(struct.pack("!H", self.pid))
+        self.sock.write(msg)
+        if qos == 1:
+            self.sock.setblocking(True)
+            while 1:
+                op = self._wait_msg()
+                if op == 0x40:
+                    sz = self.sock.read(1)
+                    if sz != b"\x02":
+                        raise OSError("PUBACK bad")
+                    rcv_pid = self.sock.read(2)
+                    if rcv_pid[0] << 8 | rcv_pid[1] == self.pid:
+                        return
+
+    def subscribe(self, topic, qos=0):
+        if isinstance(topic, str):
+            topic = topic.encode()
+        self.pid += 1
+        rlen = 2 + 2 + len(topic) + 1
+        hdr = struct.pack("!BBH", 0x82, rlen, self.pid)
+        self.sock.write(hdr)
+        self._send_str(topic)
+        self.sock.write(bytes([qos]))
+        self.sock.setblocking(True)
+        while 1:
+            op = self._wait_msg()
+            if op == 0x90:
+                resp = self.sock.read(4)
+                if resp[3] == 0x80:
+                    raise OSError("SUBACK failure")
+                return
+
+    def _wait_msg(self):
+        res = self.sock.read(1)
+        self.sock.setblocking(True)
+        if res is None:
+            return None
+        if res == b"":
+            raise OSError(-1)
+        if res == b"\xd0":  # PINGRESP
+            self.sock.read(1)
+            return None
+        op = res[0]
+        if op & 0xF0 != 0x30:
+            return op
+        sz = self._recv_len()
+        topic_len = self.sock.read(2)
+        topic_len = (topic_len[0] << 8) | topic_len[1]
+        topic = self.sock.read(topic_len)
+        sz -= topic_len + 2
+        if op & 6:
+            pid = self.sock.read(2)
+            pid = pid[0] << 8 | pid[1]
+            sz -= 2
+        msg = self.sock.read(sz)
+        self.cb(topic, msg)
+        if op & 6 == 2:
+            pkt = struct.pack("!BBH", 0x40, 2, pid)
+            self.sock.write(pkt)
+        elif op & 6 == 4:
+            raise OSError("QoS 2 not supported")
+        return op
+
+    def check_msg(self):
+        self.sock.setblocking(False)
+        return self._wait_msg()
+
+# ---------------------------------------------------------------------------
+# WasteAI — CONFIG
+# ---------------------------------------------------------------------------
+BROKER        = "broker.hivemq.com"
+CMD_TOPIC     = b"skit/akash_project/command"
+ACK_TOPIC     = b"skit/akash_project/ack"
+STATUS_TOPIC  = b"skit/akash_project/status"
+KEEPALIVE     = 30
+PING_EVERY_MS = 10000
+
+# --- PINS ---
+ir_sensor       = Pin(17, Pin.IN, Pin.PULL_DOWN)
+metal_sensor    = Pin(27, Pin.IN, Pin.PULL_DOWN)
+moisture_sensor = Pin(22, Pin.IN, Pin.PULL_DOWN)
+plastic_sensor  = Pin(26, Pin.IN, Pin.PULL_DOWN)
+
+# --- SERVOS ---
+servo_base    = PWM(Pin(18)); servo_base.freq(50)
+servo_gripper = PWM(Pin(19)); servo_gripper.freq(50)
+
 def set_angle(servo, angle):
-    """Map 0-180° to 16-bit duty (0.5ms–2.5ms pulse at 50 Hz)."""
-    duty = int(1638 + (angle / 180.0) * (8192 - 1638))
-    servo.duty_u16(duty)
+    servo.duty_u16(int(1638 + (angle / 180.0) * (8192 - 1638)))
 
 def actuate_gripper(action):
-    if action == "close":
-        set_angle(servo_gripper, 0)      # Clamp shut
-        print("  → Gripper: CLOSED")
-    elif action == "open":
-        set_angle(servo_gripper, 90)     # Release
-        print("  → Gripper: OPEN")
+    set_angle(servo_gripper, 0 if action == "close" else 90)
+    print(" -> Gripper:", action.upper())
     time.sleep(0.8)
 
-# ── CATEGORY → BIN ANGLE MAP ─────────────────────────────
-BIN_ANGLES = {
-    "Metal":     15,
-    "Wet Waste": 60,
-    "Plastic":   105,
-    "Dry Waste": 150,
-}
+BIN_ANGLES = {"Metal": 15, "Wet Waste": 60, "Plastic": 105, "Dry Waste": 150}
 
-# ── SORT SEQUENCE ─────────────────────────────────────────
+def normalize(text):
+    t = str(text).strip().strip(".\"'").lower()
+    for k in BIN_ANGLES:
+        if k.lower() == t:
+            return k
+    return None
+
 def sort_waste(category):
-    drop_angle = BIN_ANGLES.get(category, 150)   # Default → Dry Waste bin
-    print(f"\n[WasteAI] Sorting: {category}  →  Bin @ {drop_angle}°")
+    angle = BIN_ANGLES[category]
+    print("\n[WasteAI] Sorting:", category, "-> bin @", angle)
+    actuate_gripper("close")
+    set_angle(servo_base, angle); time.sleep(1.5)
+    actuate_gripper("open")
+    set_angle(servo_base, 180);  time.sleep(1.5)
+    print(" [Done] Ready for next item.\n")
 
-    actuate_gripper("close")          # Pick item
-
-    print(f"  → Rotating arm to {drop_angle}°")
-    set_angle(servo_base, drop_angle)
-    time.sleep(1.5)
-
-    actuate_gripper("open")           # Drop item
-
-    print("  → Returning to HOME (180°)")
-    set_angle(servo_base, 180)
-    time.sleep(1.5)
-    print("  [Done] Ready for next item.\n")
-
-# ── LOCAL SENSOR FALLBACK ─────────────────────────────────
 def read_local_sensors():
-    """Determine category from slide-switch states (manual override)."""
-    if metal_sensor.value() == 1:
-        return "Metal"
-    if moisture_sensor.value() == 1:
-        return "Wet Waste"
-    if plastic_sensor.value() == 1:
-        return "Plastic"
+    if metal_sensor.value():    return "Metal"
+    if moisture_sensor.value(): return "Wet Waste"
+    if plastic_sensor.value():  return "Plastic"
     return "Dry Waste"
 
-# ── MQTT CALLBACK ─────────────────────────────────────────
-def on_mqtt_message(topic, msg):
-    """Called when WasteAI web app publishes a Gemini classification."""
-    raw = msg.decode("utf-8").strip()
-    print(f"[MQTT] Received on '{topic.decode()}': {raw}")
-
-    # Accept plain text OR JSON {"category": "Plastic"}
-    category = None
-    if raw.startswith("{"):
-        try:
-            data = json.loads(raw)
-            category = data.get("category", "").strip()
-        except Exception:
-            pass
-    else:
-        category = raw
-
-    if category in BIN_ANGLES:
-        sort_waste(category)
-    else:
-        print(f"  [WARN] Unknown category '{category}', defaulting to Dry Waste")
-        sort_waste("Dry Waste")
-
-# ── WIFI CONNECTION ───────────────────────────────────────
+# --- WIFI ---
 def connect_wifi():
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
+    if not wlan.isconnected():
+        print("[WiFi] Connecting to Wokwi-GUEST...")
+        wlan.connect("Wokwi-GUEST", "")
+        for _ in range(40):
+            if wlan.isconnected():
+                break
+            time.sleep(0.5)
     if wlan.isconnected():
-        return wlan
-    print("[WiFi] Connecting to Wokwi-GUEST…")
-    wlan.connect("Wokwi-GUEST", "")
-    timeout = 15
-    while not wlan.isconnected() and timeout > 0:
-        time.sleep(0.5)
-        timeout -= 1
-    if wlan.isconnected():
-        print(f"[WiFi] Connected! IP: {wlan.ifconfig()[0]}")
+        print("[WiFi] Connected, IP:", wlan.ifconfig()[0])
     else:
-        print("[WiFi] WARNING: Could not connect. Running in LOCAL mode.")
+        print("[WiFi] WARNING: Could not connect!")
     return wlan
 
-# ── MQTT CONNECTION ───────────────────────────────────────
-BROKER  = "broker.hivemq.com"
-TOPIC   = b"wasteai/sorter/command"
-CLIENT_ID = b"pico_wasteai_001"
+# --- MQTT ---
+pending  = []
+seen_ids = []
 
-def connect_mqtt():
-    client = MQTTClient(CLIENT_ID, BROKER, keepalive=60)
-    client.set_callback(on_mqtt_message)
+def on_mqtt_message(topic, msg):
+    raw = msg.decode("utf-8").strip()
+    print("[MQTT RX]", raw)
+    cmd_id, category = None, raw
+    if raw.startswith("{"):
+        try:
+            d = json.loads(raw)
+            category = d.get("category", "")
+            cmd_id   = d.get("id")
+        except Exception:
+            pass
+    pending.append((cmd_id, category))
+
+def publish_ack(client, cmd_id, state, category=""):
     try:
-        client.connect()
-        client.subscribe(TOPIC)
-        print(f"[MQTT] Connected to {BROKER}")
-        print(f"[MQTT] Subscribed to: {TOPIC.decode()}")
-        return client
+        client.publish(ACK_TOPIC,
+                       json.dumps({"id": cmd_id, "state": state, "category": category}),
+                       qos=0)
     except Exception as e:
-        print(f"[MQTT] Connection failed: {e}")
-        return None
+        print("[ACK] publish failed:", e)
 
-# ── MAIN ─────────────────────────────────────────────────
-def main():
-    # Initialise servos to home position
-    set_angle(servo_gripper, 90)   # Gripper open
-    set_angle(servo_base, 180)     # Arm at home
-    time.sleep(1)
+def mqtt_connect():
+    cid = "pico_akash_%06x" % random.getrandbits(24)
+    print("[MQTT] Connecting as", cid, "...")
+    c = MQTTClient(cid, BROKER, keepalive=KEEPALIVE)
+    c.set_callback(on_mqtt_message)
+    c.set_last_will(STATUS_TOPIC, b"offline", retain=True)
+    c.connect()
+    c.subscribe(CMD_TOPIC, 1)
+    c.publish(STATUS_TOPIC, b"online", retain=True)
+    print("[MQTT] Connected and subscribed to", CMD_TOPIC.decode())
+    return c
 
-    print("=" * 50)
-    print("  WasteAI — Smart Waste Segregation System")
-    print("  Mode: MQTT (WiFi) + Local Sensor Fallback")
-    print("=" * 50)
+def handle_pending(client):
+    while pending:
+        cmd_id, raw_cat = pending.pop(0)
+        if cmd_id is not None and cmd_id in seen_ids:
+            print("[MQTT] Duplicate", cmd_id, "- re-acking only")
+            publish_ack(client, cmd_id, "done")
+            continue
+        cat = normalize(raw_cat)
+        if cat is None:
+            print("[WARN] Unknown category:", raw_cat)
+            publish_ack(client, cmd_id, "error", str(raw_cat))
+            continue
+        if cmd_id is not None:
+            seen_ids.append(cmd_id)
+            if len(seen_ids) > 20:
+                seen_ids.pop(0)
+        publish_ack(client, cmd_id, "received", cat)
+        sort_waste(cat)
+        publish_ack(client, cmd_id, "done", cat)
 
-    wlan = connect_wifi()
-    mqtt_client = None
+# --- MAIN ---
+set_angle(servo_gripper, 90)
+set_angle(servo_base, 180)
+time.sleep(0.5)
+print("\n--- WasteAI System Starting ---")
 
-    if wlan.isconnected():
-        time.sleep(1)
-        mqtt_client = connect_mqtt()
+wlan      = connect_wifi()
+client    = None
+last_ping = time.ticks_ms()
 
-    if mqtt_client:
-        print("\n[System] MQTT mode active.")
-        print("  Waiting for Gemini classification commands…")
-        print("  IR sensor also active for local override.\n")
+while True:
+    try:
+        if not wlan.isconnected():
+            wlan = connect_wifi()
+        if client is None:
+            client    = mqtt_connect()
+            last_ping = time.ticks_ms()
 
-        mqtt_reconnect_timer = 0
-        while True:
-            # ─ Check MQTT messages (non-blocking) ─
-            try:
-                mqtt_client.check_msg()
-            except Exception as e:
-                print(f"[MQTT] Lost connection: {e}. Reconnecting…")
-                mqtt_client = None
-                time.sleep(3)
-                mqtt_client = connect_mqtt()
+        client.check_msg()
 
-            # ─ Also respond to physical IR sensor (local trigger) ─
-            if ir_sensor.value() == 1:
-                print("\n[IR] Object detected on conveyor (local sensor).")
-                category = read_local_sensors()
-                sort_waste(category)
-                time.sleep(1)
+        if time.ticks_diff(time.ticks_ms(), last_ping) > PING_EVERY_MS:
+            client.ping()
+            last_ping = time.ticks_ms()
 
-            time.sleep(0.1)
+        handle_pending(client)
 
-    else:
-        # ─ Fallback: sensor-only mode ─────────────────────
-        print("\n[System] LOCAL mode (no WiFi). Using sensors only.")
-        print("  Activate IR sensor (btn) to trigger sorting.\n")
+        if ir_sensor.value() == 1:
+            print("[IR] Local object detected")
+            sort_waste(read_local_sensors())
+            time.sleep(1)
 
-        while True:
-            if ir_sensor.value() == 1:
-                print("\n[IR] Object detected on conveyor.")
-                time.sleep(0.3)
-                category = read_local_sensors()
-                sort_waste(category)
-                time.sleep(1)
-            time.sleep(0.05)
+        time.sleep(0.05)
 
-main()
-
-# import network
-# import time
-# import json
-# from machine import Pin, PWM
-
-# # --- AUTO-INSTALL MQTT LIBRARY ---
-# try:
-#     from umqtt.simple import MQTTClient
-# except ImportError:
-#     print("MQTT library missing. Connecting to WiFi to download it...")
-#     wlan = network.WLAN(network.STA_IF)
-#     wlan.active(True)
-#     wlan.connect("Wokwi-GUEST", "")
-#     while not wlan.isconnected():
-#         time.sleep(0.5)
-#     print("WiFi Connected. Downloading umqtt.simple...")
-#     import mip
-#     mip.install("umqtt.simple")
-#     print("Download complete! Starting system...")
-#     from umqtt.simple import MQTTClient
-# # ---------------------------------
-
-# # --- PIN ASSIGNMENTS ---
-# ir_sensor      = Pin(17, Pin.IN, Pin.PULL_DOWN)
-# metal_sensor   = Pin(27, Pin.IN, Pin.PULL_DOWN)
-# moisture_sensor= Pin(22, Pin.IN, Pin.PULL_DOWN)
-# plastic_sensor = Pin(26, Pin.IN, Pin.PULL_DOWN)
-
-# # --- SERVO SETUP ---
-# servo_base = PWM(Pin(18))
-# servo_base.freq(50)
-# servo_gripper = PWM(Pin(19))
-# servo_gripper.freq(50)
-
-# def set_angle(servo, angle):
-#     duty = int(1638 + (angle / 180.0) * (8192 - 1638))
-#     servo.duty_u16(duty)
-
-# def actuate_gripper(action):
-#     if action == "close":
-#         set_angle(servo_gripper, 0)
-#         print(" -> Gripper: CLOSED")
-#     elif action == "open":
-#         set_angle(servo_gripper, 90)
-#         print(" -> Gripper: OPEN")
-#     time.sleep(0.8)
-
-# BIN_ANGLES = {
-#     "Metal": 15,
-#     "Wet Waste": 60,
-#     "Plastic": 105,
-#     "Dry Waste": 150,
-# }
-
-# def sort_waste(category):
-#     drop_angle = BIN_ANGLES.get(category, 150)
-#     print(f"\n[WasteAI] Sorting: {category} -> Bin @ {drop_angle} degrees")
-    
-#     actuate_gripper("close")
-    
-#     print(f" -> Rotating arm to {drop_angle} degrees")
-#     set_angle(servo_base, drop_angle)
-#     time.sleep(1.5)
-    
-#     actuate_gripper("open")
-    
-#     print(" -> Returning to HOME (180 degrees)")
-#     set_angle(servo_base, 180)
-#     time.sleep(1.5)
-#     print(" [Done] Ready for next item.\n")
-
-# def read_local_sensors():
-#     if metal_sensor.value() == 1:
-#         return "Metal"
-#     if moisture_sensor.value() == 1:
-#         return "Wet Waste"
-#     if plastic_sensor.value() == 1:
-#         return "Plastic"
-#     return "Dry Waste"
-
-# def on_mqtt_message(topic, msg):
-#     raw = msg.decode("utf-8").strip()
-#     print(f"\n[MQTT Command Received]: {raw}")
-    
-#     category = raw
-#     if raw.startswith("{"):
-#         try:
-#             data = json.loads(raw)
-#             category = data.get("category", "").strip()
-#         except:
-#             pass
-            
-#     if category in BIN_ANGLES:
-#         sort_waste(category)
-#     else:
-#         print(f" [WARN] Unknown category '{category}', defaulting to Dry Waste")
-#         sort_waste("Dry Waste")
-
-# def connect_wifi():
-#     wlan = network.WLAN(network.STA_IF)
-#     wlan.active(True)
-#     if wlan.isconnected():
-#         return wlan
-#     print("[WiFi] Connecting to Wokwi-GUEST...")
-#     wlan.connect("Wokwi-GUEST", "")
-#     timeout = 15
-#     while not wlan.isconnected() and timeout > 0:
-#         time.sleep(0.5)
-#         timeout -= 1
-#     if wlan.isconnected():
-#         print(f"[WiFi] Connected! IP: {wlan.ifconfig()[0]}")
-#     else:
-#         print("[WiFi] WARNING: Could not connect.")
-#     return wlan
-
-# # def connect_mqtt():
-# #     client = MQTTClient("pico_wasteai_001", "broker.emqx.io", keepalive=60)
-# #     client.set_callback(on_mqtt_message)
-# #     try:
-# #         client.connect()
-# #         client.subscribe(b"skit/garbage_sorter/command")
-# #         print("[MQTT] Connected to HiveMQ Broker")
-# #         return client
-# #     except Exception as e:
-# #         print(f"[MQTT] Connection failed: {e}")
-# #         return None
-
-# def connect_mqtt():
-#     # Unique client ID so you don't get kicked off
-#     client = MQTTClient("pico_akash_final", "broker.hivemq.com", keepalive=60)
-#     client.set_callback(on_mqtt_message)
-#     try:
-#         client.connect()
-#         # Exact same topic as the website
-#         client.subscribe(b"skit/akash_project/command")
-#         print("[MQTT] Connected to HiveMQ Broker")
-#         return client
-#     except Exception as e:
-#         print(f"[MQTT] Connection failed: {e}")
-#         return None
-
-# # --- MAIN EXECUTION ---
-# set_angle(servo_gripper, 90)
-# set_angle(servo_base, 180)
-# time.sleep(1)
-
-# print("\n--- Starting WasteAI System ---")
-# wlan = connect_wifi()
-# mqtt_client = None
-
-# if wlan.isconnected():
-#     time.sleep(1)
-#     mqtt_client = connect_mqtt()
-
-# if mqtt_client:
-#     print("\n[System] MQTT mode active. Waiting for website commands...")
-#     while True:
-#         try:
-#             mqtt_client.check_msg()
-#         except:
-#             pass
-            
-#         if ir_sensor.value() == 1:
-#             print("\n[IR] Object detected (Local manual override)")
-#             sort_waste(read_local_sensors())
-#             time.sleep(1)
-#         time.sleep(0.1)
-# else:
-#     print("\n[System] LOCAL mode. Use physical switches to sort.")
-#     while True:
-#         if ir_sensor.value() == 1:
-#             print("\n[IR] Object detected on conveyor.")
-#             sort_waste(read_local_sensors())
-#             time.sleep(1)
-#         time.sleep(0.1)
+    except Exception as e:
+        print("[ERROR]", repr(e), "- reconnecting in 2s")
+        try:
+            client.disconnect()
+        except Exception:
+            pass
+        client = None
+        time.sleep(2)

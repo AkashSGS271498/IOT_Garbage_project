@@ -1,4 +1,7 @@
-[env:pico_w]
-board = rp2040
-framework = arduino
-board_build.filesystem_size = 0.5m
+[wokwi]
+version = 1
+
+# Pre-install MicroPython packages so the Pico doesn't have to download
+# them at runtime (avoids the ~60-second delay on first boot)
+[[package]]
+name = "umqtt.simple"
