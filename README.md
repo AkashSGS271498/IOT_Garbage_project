@@ -1,58 +1,119 @@
-# WasteAI
+# WasteAI — Smart Waste Segregation System
 
-WasteAI is a Smart Waste Segregation System that uses the Gemini API to classify waste items from images and a simulated robotic arm (via Raspberry Pi Pico W on Wokwi) to sort them into correct categories (Metal, Wet Waste, Plastic, Dry Waste).
+WasteAI is an AI-powered waste segregation system that uses **Gemini** (via OpenRouter) to classify waste items from images and a simulated robotic arm (Raspberry Pi Pico W on Wokwi) to sort them into the correct bin — **Metal**, **Wet Waste**, **Plastic**, or **Dry Waste**.
 
-## Project Overview
+## Architecture
 
-The project is divided into three main components:
+```
+┌──────────────┐    POST /api/classify    ┌──────────────┐    OpenRouter API     ┌─────────────┐
+│   Frontend   │ ───────────────────────► │   Backend    │ ──────────────────►   │  Gemini 2.5 │
+│  index.html  │ ◄─────────────────────── │  server.py   │ ◄──────────────────   │    Flash    │
+│   app.js     │    classification result │  (Python)    │    category text      └─────────────┘
+└──────┬───────┘                          └──────────────┘
+       │
+       │  MQTT (HiveMQ public broker)
+       │  topic: skit/akash_project/command
+       ▼
+┌──────────────┐
+│  Pico W      │  wokwi/main.py
+│  (Wokwi)     │  Servos sort waste into bins
+└──────────────┘
+```
 
-1. **Frontend (`index.html`, `app.js`, `style.css`)**: 
-   A clean, interactive web interface where users can upload an image of a waste item. It sends the image to the backend for classification. Once classified, it visualizes the sorting process and publishes a command to a public MQTT broker to trigger the hardware.
+## Components
 
-2. **Backend (`server.py`)**: 
-   A lightweight Python HTTP server that exposes an `/api/classify` endpoint. It receives the base64 image from the frontend and prompts the **Gemini 3.8 Flash** model to strictly classify the waste into one of the four categories.
+### 1. Frontend (`index.html`, `app.js`, `style.css`)
+- Interactive web UI with drag-and-drop image upload
+- Calls the backend `/api/classify` endpoint
+- Connects to HiveMQ public MQTT broker over WebSocket
+- Visualizes the robotic arm sorting animation on a canvas
+- Shows real-time Pico status (Online / Offline) and delivery acknowledgements
 
-3. **Hardware Simulation (`wokwi/main.py`, `wokwi/wokwi.toml`)**: 
-   A MicroPython script running on a simulated Raspberry Pi Pico W (using Wokwi). It connects to WiFi and listens to the MQTT broker for classification commands. Upon receiving a command, it actuates simulated servos to drop the waste into the corresponding bin. It also supports a local sensor fallback mode using slide switches.
+### 2. Backend (`server.py`)
+- Lightweight Python HTTP server (no dependencies beyond `python-dotenv`)
+- Proxies image classification requests to **OpenRouter** (`google/gemini-2.5-flash`)
+- Converts the OpenRouter (OpenAI-compatible) response to a Gemini-compatible shape so the frontend needs no special handling
 
-## Commands to Run the Project
+### 3. Hardware Simulation (`wokwi/main.py`, `wokwi/diagram.json`)
+- MicroPython running on a simulated **Raspberry Pi Pico W** via [Wokwi](https://wokwi.com/)
+- Connects to WiFi and subscribes to MQTT commands from the web app
+- Actuates two servos (base arm + gripper) to sort waste into the corresponding bin
+- Publishes acknowledgements (`received` → `done`) back to the web app
+- Supports local sensor fallback via slide switches and a push-button
 
-### 1. Set up the Backend
-Before running the backend, you must provide your Gemini API key.
+## Getting Started
 
-1. Copy the example env file:
-   ```bash
-   cp .env.example .env
-   ```
-2. Open `.env` and replace the placeholder with your actual key:
-   ```
-   GEMINI_API_KEY=your_real_api_key_here
-   ```
-   > Get a free key at https://aistudio.google.com/app/apikey
+### Prerequisites
+- **Python 3.10+**
+- An **OpenRouter API key** — get one free at [openrouter.ai/keys](https://openrouter.ai/keys)
+- [Wokwi VS Code Extension](https://marketplace.visualstudio.com/items?itemName=Wokwi.wokwi-vscode) (for the hardware simulation)
 
-   Alternatively, you can export it directly in your shell:
-   ```bash
-   # macOS / Linux
-   export GEMINI_API_KEY=your_real_api_key_here
+### 1. Set Up the API Key
 
-   # Windows PowerShell
-   $env:GEMINI_API_KEY="your_real_api_key_here"
-   ```
+```bash
+# Copy the example env file
+cp .env.example .env
+```
+
+Open `.env` and paste your OpenRouter key:
+
+```
+OPENROUTER_API_KEY=sk-or-v1-your_key_here
+```
 
 ### 2. Start the Server
-Run the simple HTTP server using Python. This server will handle API requests and serve the frontend files.
+
 ```bash
 python server.py
 ```
-The application will be accessible at `http://localhost:5500`.
+
+You should see:
+
+```
+[WasteAI] Using model : google/gemini-2.5-flash
+[WasteAI] API key set : YES
+[WasteAI] Serving at  : http://localhost:5500
+```
 
 ### 3. Run the Hardware Simulation (Wokwi)
-To simulate the physical waste sorting mechanism:
-- If you have the [Wokwi extension for VS Code](https://marketplace.visualstudio.com/items?itemName=Wokwi.wokwi-vscode) installed, open the `wokwi/wokwi.toml` file or run the command `Wokwi: Start Simulator` in your editor.
-- The Pico W will boot up, connect to the virtual WiFi network, connect to the MQTT broker, and wait for commands from the web app.
 
-### 4. Test the Pipeline
-1. Open `http://localhost:5500` in your web browser.
-2. Upload an image of a waste item.
-3. Click "Classify Waste".
-4. The backend will classify it, the frontend will show the result and the virtual robotic arm movement, and the Wokwi simulated Pico W will receive the MQTT command and move its servos accordingly!
+1. Open `wokwi/diagram.json` or `wokwi/wokwi.toml` in VS Code
+2. Run the command **`Wokwi: Start Simulator`**
+3. The Pico W console should show:
+   ```
+   --- WasteAI System Starting ---
+   [WiFi] Connected, IP: 10.10.0.1
+   [MQTT] Connected and subscribed to skit/akash_project/command
+   ```
+
+### 4. Test the Full Pipeline
+
+1. Open [http://localhost:5500](http://localhost:5500) in your browser
+2. Wait for **MQTT: Connected** and **Pico: ONLINE 🟢** in the header
+3. Upload an image of a waste item
+4. Click **Classify Waste**
+5. The backend classifies it via Gemini → the frontend shows the result → the Pico receives the MQTT command and moves its servos to the correct bin
+
+## MQTT Topics
+
+| Topic | Direction | Purpose |
+|-------|-----------|---------|
+| `skit/akash_project/command` | Web → Pico | Classification command (JSON `{id, category}`) |
+| `skit/akash_project/ack` | Pico → Web | Acknowledgement (`received` / `done` / `error`) |
+| `skit/akash_project/status` | Pico → Web | Online / Offline (LWT) |
+
+## Project Structure
+
+```
+├── index.html          # Frontend UI
+├── app.js              # Frontend logic + MQTT + servo animation
+├── style.css           # Styling
+├── server.py           # Python backend (OpenRouter proxy)
+├── .env.example        # Template for API key
+├── .gitignore
+├── README.md
+└── wokwi/
+    ├── main.py         # MicroPython code for Pico W
+    ├── diagram.json    # Wokwi circuit layout
+    └── wokwi.toml      # Wokwi config
+```
